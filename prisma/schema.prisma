@@ -1,0 +1,81 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Channel {
+  WHATSAPP
+  SMS
+  EMAIL
+  RCS
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  FAILED
+}
+
+enum ExecutionType {
+  LIVE_LLM
+  LOCAL_CACHE
+  MANUAL_OVERRIDE
+}
+
+model Customer {
+  id                         String         @id @default(uuid()) @db.Uuid
+  name                       String
+  email                      String?
+  phone                      String?
+  predicted_preferred_channel Channel
+  is_vip_rigid_routing       Boolean        @default(false)
+  orders                     Order[]
+  messageLogs                MessageLog[]
+}
+
+model Order {
+  id          String   @id @default(uuid()) @db.Uuid
+  customer_id String   @db.Uuid
+  amount      Float
+  items       String
+  created_at  DateTime @default(now())
+  customer    Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+}
+
+model Campaign {
+  id                   String       @id @default(uuid()) @db.Uuid
+  name                 String
+  status               String       @default("DRAFT")
+  target_segment_query String
+  ai_generated         Boolean
+  messageLogs          MessageLog[]
+}
+
+model MessageLog {
+  id                     String         @id @default(uuid()) @db.Uuid
+  campaign_id            String         @db.Uuid
+  customer_id            String         @db.Uuid
+  channel                Channel
+  current_status         DeliveryStatus
+  status_sequence_number Int
+  idempotency_key        String         @unique
+  last_updated_at        DateTime       @updatedAt
+  campaign               Campaign       @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  customer               Customer       @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+}
+
+model TokenLedger {
+  id                String        @id @default(uuid()) @db.Uuid
+  prompt_tokens     Int
+  completion_tokens Int
+  calculated_cost   Float
+  execution_type    ExecutionType
+  created_at        DateTime      @default(now())
+}

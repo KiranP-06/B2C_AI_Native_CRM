@@ -1,0 +1,21 @@
+{
+  "name": "b2c-ai-native-crm",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "services/crm",
+    "services/mock-channel",
+    "frontend"
+  ],
+  "scripts": {
+    "bootstrap": "npm install",
+    "dev:crm": "npm run dev --workspace=services/crm",
+    "dev:mock": "npm run dev --workspace=services/mock-channel",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev": "concurrently \"npm run dev:crm\" \"npm run dev:mock\" \"npm run dev:frontend\"",
+    "prisma:generate": "npm run prisma:generate --workspace=services/crm"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
