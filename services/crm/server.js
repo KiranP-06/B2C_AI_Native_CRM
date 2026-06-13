@@ -12,183 +12,330 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------------------------------------------------------
-// DATABASE FALLBACK LOGIC
-// ---------------------------------------------------------
-const inMemoryDb = {
+// ─────────────────────────────────────────────────────────
+// DATABASE LAYER — Prisma-first, in-memory fallback
+// ─────────────────────────────────────────────────────────
+let prisma = null;
+let usingPrisma = false;
+
+async function initDatabase() {
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl && dbUrl.trim() !== '') {
+    try {
+      const { PrismaClient } = await import('@prisma/client');
+      prisma = new PrismaClient();
+      await prisma.$connect();
+      usingPrisma = true;
+      console.log('✅ Connected to Supabase PostgreSQL via Prisma');
+    } catch (err) {
+      console.warn('⚠️  Prisma connection failed, using in-memory fallback:', err.message);
+      usingPrisma = false;
+    }
+  } else {
+    console.log('ℹ️  No DATABASE_URL set — using in-memory database');
+  }
+}
+
+// In-memory fallback store (used when no DB configured)
+const memDb = {
   customers: [
-    { id: 'c1', name: 'Alice VIP', email: 'alice@example.com', phone: null, predicted_preferred_channel: 'EMAIL', is_vip_rigid_routing: true },
-    { id: 'c2', name: 'Bob Normal', email: null, phone: null, predicted_preferred_channel: 'WHATSAPP', is_vip_rigid_routing: false },
-    { id: 'c3', name: 'Charlie SMS', email: null, phone: '123456789', predicted_preferred_channel: 'SMS', is_vip_rigid_routing: false }
+    { id: crypto.randomUUID(), name: 'Alice VIP', email: 'alice@example.com', phone: '+919876543210', predicted_preferred_channel: 'EMAIL', is_vip_rigid_routing: true },
+    { id: crypto.randomUUID(), name: 'Bob Normal', email: null, phone: null, predicted_preferred_channel: 'WHATSAPP', is_vip_rigid_routing: false },
+    { id: crypto.randomUUID(), name: 'Charlie SMS', email: null, phone: '+919123456789', predicted_preferred_channel: 'SMS', is_vip_rigid_routing: false },
+    { id: crypto.randomUUID(), name: 'Diana Multi', email: 'diana@company.com', phone: '+918765432100', predicted_preferred_channel: 'WHATSAPP', is_vip_rigid_routing: false },
+    { id: crypto.randomUUID(), name: 'Eve RCS', email: 'eve@startup.io', phone: '+917654321098', predicted_preferred_channel: 'RCS', is_vip_rigid_routing: false },
   ],
+  orders: [],
   campaigns: [],
   messageLogs: [],
-  tokenLedger: []
+  tokenLedger: [],
 };
 
-// ---------------------------------------------------------
-// WEBSOCKET SETUP
-// ---------------------------------------------------------
-const port = 5001;
-const server = app.listen(port, () => {
-  console.log(`CRM Service running on port ${port}`);
-});
+// ─── Unified Data Access Layer ───
+const db = {
+  // Customers
+  async getCustomers() {
+    if (usingPrisma) return prisma.customer.findMany();
+    return memDb.customers;
+  },
+
+  async createCustomer(data) {
+    if (usingPrisma) return prisma.customer.create({ data });
+    const c = { id: crypto.randomUUID(), ...data };
+    memDb.customers.push(c);
+    return c;
+  },
+
+  // Campaigns
+  async upsertCampaign(id, data) {
+    if (usingPrisma) {
+      return prisma.campaign.upsert({
+        where: { id },
+        create: { id, ...data },
+        update: data,
+      });
+    }
+    let camp = memDb.campaigns.find(c => c.id === id);
+    if (!camp) {
+      camp = { id, ...data };
+      memDb.campaigns.push(camp);
+    } else {
+      Object.assign(camp, data);
+    }
+    return camp;
+  },
+
+  // Message Logs
+  async createMessageLog(data) {
+    if (usingPrisma) return prisma.messageLog.create({ data });
+    const log = { id: crypto.randomUUID(), ...data, last_updated_at: new Date().toISOString() };
+    memDb.messageLogs.push(log);
+    return log;
+  },
+
+  async findMessageLogByKey(idempotency_key) {
+    if (usingPrisma) return prisma.messageLog.findUnique({ where: { idempotency_key } });
+    return memDb.messageLogs.find(l => l.idempotency_key === idempotency_key) || null;
+  },
+
+  async updateMessageLog(idempotency_key, data) {
+    if (usingPrisma) {
+      return prisma.messageLog.update({ where: { idempotency_key }, data });
+    }
+    const log = memDb.messageLogs.find(l => l.idempotency_key === idempotency_key);
+    if (log) Object.assign(log, data, { last_updated_at: new Date().toISOString() });
+    return log;
+  },
+
+  async getAllMessageLogs() {
+    if (usingPrisma) return prisma.messageLog.findMany({ orderBy: { last_updated_at: 'desc' } });
+    return [...memDb.messageLogs].reverse();
+  },
+
+  // Token Ledger
+  async createTokenLedger(data) {
+    if (usingPrisma) return prisma.tokenLedger.create({ data });
+    const entry = { id: crypto.randomUUID(), ...data, created_at: new Date().toISOString() };
+    memDb.tokenLedger.push(entry);
+    return entry;
+  },
+
+  async getTokenLedgerAll() {
+    if (usingPrisma) return prisma.tokenLedger.findMany();
+    return memDb.tokenLedger;
+  },
+};
+
+// ─────────────────────────────────────────────────────────
+// WEBSOCKET SERVER
+// ─────────────────────────────────────────────────────────
+const PORT = process.env.CRM_PORT || 5001;
+const server = app.listen(PORT, () => console.log(`🚀 CRM Service on port ${PORT}`));
 const wss = new WebSocketServer({ server });
 
-function broadcastUpdate(type, payload) {
-  wss.clients.forEach(client => {
-    if (client.readyState === 1) { // OPEN
-      client.send(JSON.stringify({ type, payload }));
-    }
-  });
+function broadcast(type, payload) {
+  const msg = JSON.stringify({ type, payload });
+  wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
 }
 
-// ---------------------------------------------------------
-// ROUTING ENGINE & UTILS
-// ---------------------------------------------------------
-const STATUS_WEIGHTS = {
-  'FAILED': 0,
-  'PENDING': 1,
-  'SENT': 2,
-  'DELIVERED': 3,
-  'OPENED': 4,
-  'CLICKED': 5
-};
+// ─────────────────────────────────────────────────────────
+// SMART ROUTING ENGINE
+// ─────────────────────────────────────────────────────────
+const STATUS_WEIGHTS = { FAILED: 0, PENDING: 1, SENT: 2, DELIVERED: 3, OPENED: 4, CLICKED: 5 };
 
-// Check if customer has contact info for a channel
-function hasContactInfoForChannel(customer, channel) {
+function hasContactInfo(customer, channel) {
   if (channel === 'EMAIL') return !!customer.email;
-  if (channel === 'WHATSAPP' || channel === 'SMS' || channel === 'RCS') return !!customer.phone;
-  return false;
+  return !!customer.phone; // WHATSAPP, SMS, RCS all need phone
 }
 
-// ---------------------------------------------------------
-// API ROUTES
-// ---------------------------------------------------------
-
-app.get('/api/customers', (req, res) => {
-  res.json(inMemoryDb.customers);
-});
-
-// Trigger a Dispatch Loop
-app.post('/api/dispatch', async (req, res) => {
-  const { campaign_id, target_channel, message_text } = req.body;
-  
-  if (!inMemoryDb.campaigns.find(c => c.id === campaign_id)) {
-    inMemoryDb.campaigns.push({ id: campaign_id, name: 'Blast', status: 'ACTIVE' });
+function resolveChannel(customer, requestedChannel) {
+  // VIP: strict — never fallback
+  if (customer.is_vip_rigid_routing) {
+    return { channel: requestedChannel, fallback: false, reason: 'VIP rigid routing' };
   }
 
-  // Loop over all customers
-  for (const customer of inMemoryDb.customers) {
-    let selectedChannel = target_channel;
+  // Has contact info for requested channel?
+  if (hasContactInfo(customer, requestedChannel)) {
+    return { channel: requestedChannel, fallback: false, reason: null };
+  }
 
-    // SMART ROUTING ENGINE
-    if (customer.is_vip_rigid_routing) {
-      // VIP Strict: do not fallback.
-      selectedChannel = target_channel;
-    } else {
-      // Dynamic fallback
-      if (!hasContactInfoForChannel(customer, selectedChannel)) {
-        console.log(`[Smart Routing] Missing ${selectedChannel} for ${customer.name}, falling back to ${customer.predicted_preferred_channel}`);
-        selectedChannel = customer.predicted_preferred_channel;
-        
-        // Secondary check on fallback
-        if (!hasContactInfoForChannel(customer, selectedChannel)) {
-            selectedChannel = 'EMAIL'; // Default ultimate fallback
-        }
+  // Fallback to predicted preferred
+  const preferred = customer.predicted_preferred_channel;
+  if (hasContactInfo(customer, preferred)) {
+    return { channel: preferred, fallback: true, reason: `Missing ${requestedChannel} info → fallback to ${preferred}` };
+  }
+
+  // Ultimate fallback: try any channel that works
+  const channels = ['EMAIL', 'WHATSAPP', 'SMS', 'RCS'];
+  for (const ch of channels) {
+    if (hasContactInfo(customer, ch)) {
+      return { channel: ch, fallback: true, reason: `No ${requestedChannel} or ${preferred} → fallback to ${ch}` };
+    }
+  }
+
+  // Nothing works — will result in FAILED
+  return { channel: requestedChannel, fallback: false, reason: 'No valid contact info for any channel' };
+}
+
+// ─────────────────────────────────────────────────────────
+// API ROUTES
+// ─────────────────────────────────────────────────────────
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', database: usingPrisma ? 'prisma' : 'in-memory', uptime: process.uptime() });
+});
+
+// Get all customers
+app.get('/api/customers', async (req, res) => {
+  try {
+    const customers = await db.getCustomers();
+    res.json(customers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── DISPATCH ───
+app.post('/api/dispatch', async (req, res) => {
+  const { campaign_id, target_channel, message_text } = req.body;
+  if (!campaign_id || !target_channel) {
+    return res.status(400).json({ error: 'campaign_id and target_channel are required' });
+  }
+
+  try {
+    await db.upsertCampaign(campaign_id, {
+      name: `Campaign ${campaign_id}`,
+      status: 'ACTIVE',
+      target_segment_query: `channel=${target_channel}`,
+      ai_generated: false,
+    });
+
+    const customers = await db.getCustomers();
+    const results = [];
+
+    for (const customer of customers) {
+      const routing = resolveChannel(customer, target_channel);
+
+      if (routing.reason) {
+        console.log(`[Routing] ${customer.name}: ${routing.reason}`);
       }
-    }
 
-    const idempotency_key = crypto.createHash('sha256').update(`${campaign_id}_${customer.id}_${selectedChannel}`).digest('hex');
+      const idempotency_key = crypto.createHash('sha256')
+        .update(`${campaign_id}_${customer.id}_${routing.channel}`)
+        .digest('hex');
 
-    // Check if we can proceed based on contact info validity
-    let initialStatus = 'PENDING';
-    if (!hasContactInfoForChannel(customer, selectedChannel)) {
-      initialStatus = 'FAILED';
-    }
+      const canDeliver = hasContactInfo(customer, routing.channel);
+      const initialStatus = canDeliver ? 'PENDING' : 'FAILED';
 
-    const logEntry = {
-      id: crypto.randomUUID(),
-      campaign_id,
-      customer_id: customer.id,
-      customer_name: customer.name,
-      channel: selectedChannel,
-      current_status: initialStatus,
-      status_sequence_number: 1,
-      idempotency_key,
-      last_updated_at: new Date().toISOString()
-    };
-    inMemoryDb.messageLogs.push(logEntry);
-    broadcastUpdate('LOG_UPDATE', logEntry);
+      const logEntry = await db.createMessageLog({
+        campaign_id,
+        customer_id: customer.id,
+        channel: routing.channel,
+        current_status: initialStatus,
+        status_sequence_number: 1,
+        idempotency_key,
+      });
 
-    // Call Mock Channel Service if PENDING
-    if (initialStatus === 'PENDING') {
-      try {
-        await axios.post('http://localhost:5002/send', {
+      // Enrich with customer name for the frontend
+      const enrichedLog = { ...logEntry, customer_name: customer.name };
+      broadcast('LOG_UPDATE', enrichedLog);
+      results.push(enrichedLog);
+
+      // Fire to Mock Channel Service if deliverable
+      if (canDeliver) {
+        axios.post('http://localhost:5002/send', {
           idempotency_key,
           campaign_id,
           customer_id: customer.id,
-          channel: selectedChannel
-        });
-      } catch (e) {
-        console.error(`Mock channel service error:`, e.message);
+          channel: routing.channel,
+        }).catch(err => console.error(`[MockChannel] Error:`, err.message));
       }
     }
-  }
 
-  res.json({ message: 'Dispatch started' });
+    res.json({ message: 'Dispatch completed', count: results.length, results });
+  } catch (err) {
+    console.error('[Dispatch] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Webhook Receipt Endpoint
-app.post('/api/webhook', (req, res) => {
+// ─── WEBHOOK RECEIPT (Out-of-Order State Engine) ───
+app.post('/api/webhook', async (req, res) => {
   const { idempotency_key, status } = req.body;
-
-  const logIndex = inMemoryDb.messageLogs.findIndex(l => l.idempotency_key === idempotency_key);
-  if (logIndex === -1) return res.status(404).send('Log not found');
-
-  const log = inMemoryDb.messageLogs[logIndex];
-  
-  // OUT-OF-ORDER STATE VALIDATION
-  const currentWeight = STATUS_WEIGHTS[log.current_status];
-  const newWeight = STATUS_WEIGHTS[status];
-
-  if (newWeight <= currentWeight && status !== 'FAILED') {
-    console.log(`[Webhook] State regression rejected. Key: ${idempotency_key}. Current: ${log.current_status}, Incoming: ${status}`);
-    return res.status(200).send('Ignored regression');
+  if (!idempotency_key || !status) {
+    return res.status(400).json({ error: 'idempotency_key and status required' });
   }
 
-  // Update State
-  log.current_status = status;
-  log.status_sequence_number += 1;
-  log.last_updated_at = new Date().toISOString();
+  try {
+    const log = await db.findMessageLogByKey(idempotency_key);
+    if (!log) return res.status(404).json({ error: 'Log not found' });
 
-  inMemoryDb.messageLogs[logIndex] = log;
-  
-  // Emit to Frontend
-  broadcastUpdate('LOG_UPDATE', log);
+    const currentWeight = STATUS_WEIGHTS[log.current_status];
+    const newWeight = STATUS_WEIGHTS[status];
 
-  res.status(200).send('OK');
+    // Reject state regressions (out-of-order protection)
+    if (newWeight <= currentWeight && status !== 'FAILED') {
+      console.log(`[Webhook] ❌ Regression rejected: ${log.current_status} → ${status} (key: ${idempotency_key.substring(0, 12)}…)`);
+      return res.status(200).json({ action: 'rejected', reason: 'state_regression' });
+    }
+
+    // Accept state progression
+    const updated = await db.updateMessageLog(idempotency_key, {
+      current_status: status,
+      status_sequence_number: log.status_sequence_number + 1,
+    });
+
+    console.log(`[Webhook] ✅ ${log.current_status} → ${status} (key: ${idempotency_key.substring(0, 12)}…)`);
+
+    // Broadcast to frontend
+    const customers = await db.getCustomers();
+    const customer = customers.find(c => c.id === updated.customer_id);
+    broadcast('LOG_UPDATE', { ...updated, customer_name: customer?.name || 'Unknown' });
+
+    res.status(200).json({ action: 'accepted', status });
+  } catch (err) {
+    console.error('[Webhook] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// AI Insights Generation Route
+// ─── AI INSIGHTS ───
 app.post('/api/insights', async (req, res) => {
-  const prompt = `Analyze this dataset and give actionable CRM insights: ${JSON.stringify(inMemoryDb.customers)}`;
-  const result = await generateAiInsights({ prompt, inMemoryDb });
-  broadcastUpdate('FINOPS_UPDATE', getFinOpsStats());
-  res.json(result);
+  try {
+    const customers = await db.getCustomers();
+    const prompt = `You are a CRM Data Analyst. Analyze this customer dataset and return a strict JSON object with an "insights" array. Each insight must have: trend, suggested_strategy, audience_segment, message_draft. Customers: ${JSON.stringify(customers)}`;
+
+    const result = await generateAiInsights({ prompt, dbLayer: db });
+
+    // Refresh finops stats and broadcast
+    broadcast('FINOPS_UPDATE', await getFinOpsStats());
+
+    res.json(result);
+  } catch (err) {
+    console.error('[Insights] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Helper for Observability Stats
-function getFinOpsStats() {
-  const totalTokens = inMemoryDb.tokenLedger.reduce((sum, item) => sum + item.prompt_tokens + item.completion_tokens, 0);
-  const totalSpend = inMemoryDb.tokenLedger.reduce((sum, item) => sum + item.calculated_cost, 0);
-  const cacheHits = inMemoryDb.tokenLedger.filter(i => i.execution_type === 'LOCAL_CACHE').length;
-  const totalCalls = inMemoryDb.tokenLedger.length;
+// ─── FINOPS STATS ───
+async function getFinOpsStats() {
+  const ledger = await db.getTokenLedgerAll();
+  const totalTokens = ledger.reduce((s, i) => s + i.prompt_tokens + i.completion_tokens, 0);
+  const totalSpend = ledger.reduce((s, i) => s + i.calculated_cost, 0);
+  const cacheHits = ledger.filter(i => i.execution_type === 'LOCAL_CACHE').length;
+  const totalCalls = ledger.length;
   const cacheHitRate = totalCalls === 0 ? 0 : (cacheHits / totalCalls) * 100;
-
-  return { totalTokens, totalSpend, cacheHitRate };
+  return { totalTokens, totalSpend, cacheHitRate, totalCalls };
 }
 
-app.get('/api/finops', (req, res) => {
-  res.json(getFinOpsStats());
+app.get('/api/finops', async (req, res) => {
+  try {
+    res.json(await getFinOpsStats());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+// ─── Startup ───
+initDatabase();
