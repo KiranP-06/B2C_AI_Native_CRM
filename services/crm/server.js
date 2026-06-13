@@ -338,7 +338,10 @@ app.post('/api/webhook', async (req, res) => {
 app.post('/api/insights', async (req, res) => {
   try {
     const customers = await db.getCustomers();
-    const prompt = `You are a CRM Data Analyst. Analyze this customer dataset and return a strict JSON object with an "insights" array. Each insight must have: trend, suggested_strategy, audience_segment, message_draft. Customers: ${JSON.stringify(customers)}`;
+    const logs = await db.getAllMessageLogs();
+    // Slice logs to last 100 to fit in context window and avoid token limits
+    const recentLogs = logs.slice(0, 100);
+    const prompt = `You are a CRM Data Analyst. Analyze this dataset and return a strict JSON object with an "insights" array. Each insight must have: trend, suggested_strategy, audience_segment, message_draft. Customers: ${JSON.stringify(customers)}. Recent Message History: ${JSON.stringify(recentLogs)}`;
 
     const result = await generateAiInsights({ prompt, dbLayer: db });
 

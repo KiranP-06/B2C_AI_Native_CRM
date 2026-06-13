@@ -80,18 +80,20 @@ export async function generateAiInsights({ prompt, forceLiveCall = false, useCac
   let executionType = 'LIVE_LLM';
 
   try {
-    if (!OPENAI_API_KEY || OPENAI_API_KEY.startsWith('sk-1234')) {
+    if (!OPENAI_API_KEY || OPENAI_API_KEY.includes('1234qrst')) {
       throw new Error('No valid OPENAI_API_KEY configured');
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'HTTP-Referer': 'http://localhost:5173', // OpenRouter required header
+        'X-Title': 'AI-Native CRM', // OpenRouter optional header
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'openai/gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'You are a CRM Data Analyst. Always respond with strict JSON only.' },
           { role: 'user', content: prompt },
