@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createClient } from '@supabase/supabase-js';
+import React from 'react';
 import {
   Activity, Send, CheckCircle2, MailOpen, MousePointerClick,
   Zap, DollarSign, BrainCircuit, Play, RefreshCw, Radio,
@@ -6,15 +8,24 @@ import {
   Hash, TrendingUp, Target, Users, BarChart3
 } from 'lucide-react';
 
+// ─── Initialize Supabase Client ───
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://qmvfmwycfazrnnhlkcqk.supabase.co';
+const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || 'sb_publishable_V56orvYiqzHQEVFxHqQUlA_U1qUFk-v';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 // ─── KPI Aggregation ───
 function computeKPIs(logs) {
-  const counts = { PENDING: 0, SENT: 0, DELIVERED: 0, OPENED: 0, CLICKED: 0, FAILED: 0 };
+  const counts = { SENT: 0, DELIVERED: 0, OPENED: 0, CLICKED: 0, FAILED: 0 };
+  const total = logs.length;
   logs.forEach(l => { if (counts[l.current_status] !== undefined) counts[l.current_status]++; });
-  return counts;
+  const kpis = {};
+  for (const status in counts) {
+    kpis[status] = total > 0 ? Math.round((counts[status] / total) * 100) : 0;
+  }
+  return { percentages: kpis, raw: counts, total };
 }
 
 const STATUS_CONFIG = {
-  PENDING:   { icon: Activity,          color: 'text-yellow-400',  bg: 'bg-yellow-500/10', badge: 'badge-pending' },
   SENT:      { icon: Send,              color: 'text-blue-400',    bg: 'bg-blue-500/10',   badge: 'badge-sent' },
   DELIVERED: { icon: CheckCircle2,      color: 'text-emerald-400', bg: 'bg-emerald-500/10', badge: 'badge-delivered' },
   OPENED:    { icon: MailOpen,          color: 'text-purple-400',  bg: 'bg-purple-500/10', badge: 'badge-opened' },
@@ -33,65 +44,119 @@ export default function App() {
   const [channel, setChannel] = useState('WHATSAPP');
   const [message, setMessage] = useState('');
   const [eventFeed, setEventFeed] = useState([]);
+  const [selectedStatus, setSelectedStatus] = useState(null);
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
 
-  // ─── WebSocket with Auto-Reconnect ───
-  const connectWs = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    try {
-      const ws = new WebSocket(`ws://${window.location.hostname}:5001`);
-      ws.onopen = () => { setWsConnected(true); };
-      ws.onclose = () => {
-        setWsConnected(false);
-        reconnectTimer.current = setTimeout(connectWs, 3000);
-      };
-      ws.onerror = () => { ws.close(); };
-      ws.onmessage = (evt) => {
-        const data = JSON.parse(evt.data);
-        if (data.type === 'LOG_UPDATE') {
+  const [customers, setCustomers] = useState({});
+
+  // ─── Fetch Initial Data ───
+  useEffect(() => {
+    // Fetch customers
+    fetch('/api/customers')
+      .then(r => r.json())
+      .then(data => {
+        const cMap = {};
+        data.forEach(c => cMap[c.id] = c);
+        setCustomers(cMap);
+      })
+      .catch(console.error);
+      
+    // Fetch initial FinOps stats
+    fetch('/api/finops').then(r => r.json()).then(setFinops).catch(() => {});
+
+    // Fetch initial logs
+    fetch('/api/logs')
+      .then(r => r.json())
+      .then(data => {
+        setLogs(data);
+        setEventFeed(data.slice(0, 50).map(l => ({ ts: new Date(l.last_updated_at).toLocaleTimeString(), ...l })));
+      })
+      .catch(console.error);
+  }, []);
+
+  // ─── True Supabase Realtime ───
+  useEffect(() => {
+    // We only connect Realtime once we have the customers map populated
+    if (Object.keys(customers).length === 0) return;
+    
+    setWsConnected(true); // Optimistic UI for connection state
+
+    const channel = supabase.channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'MessageLog' },
+        (payload) => {
+          const data = payload.new;
+          if (!data) return;
+
+          const customer = customers[data.customer_id] || {};
+          const enrichedLog = {
+            ...data,
+            customer_name: customer.name || 'Unknown',
+            predicted_preferred_channel: customer.predicted_preferred_channel || 'UNKNOWN',
+            is_vip_rigid_routing: customer.is_vip_rigid_routing || false
+          };
+
           setLogs(prev => {
-            const idx = prev.findIndex(l => l.id === data.payload.id);
+            const idx = prev.findIndex(l => l.id === enrichedLog.id);
             if (idx >= 0) {
               const next = [...prev];
-              next[idx] = data.payload;
+              next[idx] = enrichedLog;
               return next;
             }
-            return [data.payload, ...prev];
+            return [enrichedLog, ...prev];
           });
+          
           setEventFeed(prev => [
-            { ts: new Date().toLocaleTimeString(), ...data.payload },
+            { ts: new Date().toLocaleTimeString(), ...enrichedLog },
             ...prev.slice(0, 50)
           ]);
         }
-        if (data.type === 'FINOPS_UPDATE') setFinops(data.payload);
-      };
-      wsRef.current = ws;
-    } catch { setWsConnected(false); }
-  }, []);
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setWsConnected(true);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setWsConnected(false);
+        }
+      });
 
-  useEffect(() => {
-    connectWs();
-    fetch('/api/finops').then(r => r.json()).then(setFinops).catch(() => {});
     return () => {
-      clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
+      supabase.removeChannel(channel);
     };
-  }, [connectWs]);
+  }, [customers]);
 
   // ─── Dispatch ───
   const triggerDispatch = async () => {
     setDispatching(true);
     try {
-      await fetch('/api/dispatch', {
+      const res = await fetch('/api/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          campaign_id: `camp_${Date.now()}`,
+          campaign_id: crypto.randomUUID(),
           target_channel: channel,
           message_text: message || 'Hello from AI-Native CRM!'
         })
       });
+      const data = await res.json();
+      if (data.results) {
+        // Optimistically update the UI to provide immediate feedback
+        setLogs(prev => {
+          const next = [...prev];
+          data.results.forEach(newLog => {
+            const idx = next.findIndex(l => l.id === newLog.id);
+            if (idx >= 0) next[idx] = newLog;
+            else next.unshift(newLog);
+          });
+          return next;
+        });
+        setEventFeed(prev => {
+          const newEvents = data.results.map(l => ({ ts: new Date().toLocaleTimeString(), ...l }));
+          return [...newEvents, ...prev].slice(0, 50);
+        });
+      }
     } catch (e) { console.error('Dispatch error:', e); }
     finally { setDispatching(false); }
   };
@@ -109,8 +174,10 @@ export default function App() {
     finally { setLoadingInsights(false); }
   };
 
-  const kpis = computeKPIs(logs);
+  const kpiData = computeKPIs(logs);
 
+  const optimizedCount = logs.filter(l => l.channel !== l.predicted_preferred_channel && !l.is_vip_rigid_routing).length;
+  const bypassCount = logs.filter(l => l.is_vip_rigid_routing).length;
   return (
     <div className="min-h-screen px-4 py-6 sm:px-6 lg:px-8 max-w-[1440px] mx-auto">
 
@@ -138,23 +205,56 @@ export default function App() {
       </header>
 
       {/* ═══ KPI Strip ═══ */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        {Object.entries(kpis).map(([status, count]) => {
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+        {Object.entries(kpiData.percentages).map(([status, percentage]) => {
           const cfg = STATUS_CONFIG[status];
           const Icon = cfg.icon;
+          const isSelected = selectedStatus === status;
           return (
-            <div key={status} className="stat-chip flex items-center gap-3 animate-fade-in">
-              <div className={`p-2 rounded-lg ${cfg.bg}`}>
-                <Icon className={`w-4 h-4 ${cfg.color}`} />
+            <div 
+              key={status} 
+              onClick={() => setSelectedStatus(isSelected ? null : status)}
+              className={`stat-chip flex flex-col items-start gap-2 animate-fade-in cursor-pointer transition-all ${isSelected ? 'ring-2 ring-accent-light bg-surface-900' : 'hover:bg-surface-900/60'}`}
+            >
+              <div className="flex items-center justify-between w-full">
+                <div className={`p-1.5 rounded-md ${cfg.bg}`}>
+                  <Icon className={`w-4 h-4 ${cfg.color}`} />
+                </div>
+                <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">{status}</span>
               </div>
-              <div>
-                <p className="text-2xl font-bold text-white">{count}</p>
-                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">{status}</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <p className="text-3xl font-bold text-white">{percentage}%</p>
+                <p className="text-xs text-slate-400">({kpiData.raw[status]})</p>
               </div>
             </div>
           );
         })}
       </div>
+
+      {/* ═══ Contextual Details ═══ */}
+      {selectedStatus && (
+        <div className="glass-card p-4 mb-6 animate-slide-down border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-white flex items-center gap-2">
+              {STATUS_CONFIG[selectedStatus].icon && React.createElement(STATUS_CONFIG[selectedStatus].icon, { className: `w-4 h-4 ${STATUS_CONFIG[selectedStatus].color}` })}
+              Customers {selectedStatus}
+            </h3>
+            <button onClick={() => setSelectedStatus(null)} className="text-xs text-slate-400 hover:text-white">Close Context</button>
+          </div>
+          <div className="max-h-48 overflow-y-auto pr-2 flex flex-wrap gap-2">
+            {logs.filter(l => l.current_status === selectedStatus).length === 0 ? (
+              <p className="text-sm text-slate-500 italic w-full text-center py-4">No customers currently in this status.</p>
+            ) : (
+              logs.filter(l => l.current_status === selectedStatus).map(l => (
+                <div key={l.id} className="bg-surface-900/80 px-3 py-1.5 rounded flex items-center gap-2 text-sm text-slate-200 border border-white/[0.03]">
+                  <span className="font-medium">{l.customer_name}</span>
+                  <span className="text-xs text-slate-500">via {l.channel}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ═══ Main Grid ═══ */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
@@ -231,15 +331,43 @@ export default function App() {
           </div>
         </div>
 
-        {/* ─── Right: Live Event Stream ─── */}
-        <div className="lg:col-span-8 glass-card flex flex-col" style={{ minHeight: '560px' }}>
-          <div className="px-6 py-4 border-b border-white/[0.04] flex items-center justify-between">
-            <h2 className="font-bold text-white flex items-center gap-2">
-              <Radio className="w-4 h-4 text-accent-light" />
-              Live Delivery Stream
-            </h2>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">{logs.length} events</span>
+        {/* ─── Right: Live Delivery Metrics ─── */}
+        <div className="lg:col-span-8 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="glass-card p-6 border-t-2 border-t-accent-light">
+              <div className="flex items-center gap-2 mb-2">
+                <Target className="w-5 h-5 text-accent-light" />
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Total Dispatched</h3>
+              </div>
+              <p className="text-4xl font-black text-white">{kpiData.total}</p>
+              <p className="text-xs text-slate-500 mt-2">Active campaign messages</p>
+            </div>
+            
+            <div className="glass-card p-6 border-t-2 border-t-emerald-500">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Optimized Routes</h3>
+              </div>
+              <p className="text-4xl font-black text-white">{optimizedCount}</p>
+              <p className="text-xs text-emerald-500/70 mt-2 font-medium">Smart channel fallbacks applied</p>
+            </div>
+
+            <div className="glass-card p-6 border-t-2 border-t-purple-500">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-5 h-5 text-purple-400" />
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Guardrail Bypasses</h3>
+              </div>
+              <p className="text-4xl font-black text-white">{bypassCount}</p>
+              <p className="text-xs text-purple-500/70 mt-2 font-medium">Strict VIP routing enforced</p>
+            </div>
+          </div>
+
+          <div className="glass-card p-6 flex flex-col" style={{ minHeight: '344px' }}>
+            <div className="flex items-center justify-between mb-4 border-b border-white/[0.04] pb-4">
+              <h2 className="font-bold text-white flex items-center gap-2">
+                <Radio className="w-4 h-4 text-accent-light" />
+                Recent Delivery Activity
+              </h2>
               {wsConnected && (
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -247,41 +375,40 @@ export default function App() {
                 </span>
               )}
             </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {logs.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-600">
-                <Radio className="w-10 h-10 mb-3 opacity-30" />
-                <p className="font-medium">No events yet</p>
-                <p className="text-sm mt-1">Fire a dispatch to see real-time delivery tracking</p>
-              </div>
-            ) : (
-              logs.map((log) => {
-                const cfg = STATUS_CONFIG[log.current_status] || STATUS_CONFIG.PENDING;
-                const Icon = cfg.icon;
-                return (
-                  <div key={log.id + log.current_status} className="bg-surface-900/50 px-4 py-3 rounded-xl border border-white/[0.03] flex items-center justify-between animate-slide-up">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`p-1.5 rounded-lg ${cfg.bg} shrink-0`}>
-                        <Icon className={`w-4 h-4 ${cfg.color}`} />
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+              {eventFeed.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-600 pb-8">
+                  <Activity className="w-8 h-8 mb-3 opacity-30" />
+                  <p className="font-medium text-sm">No recent activity</p>
+                </div>
+              ) : (
+                eventFeed.slice(0, 8).map((log, idx) => {
+                  const cfg = STATUS_CONFIG[log.current_status] || { bg: 'bg-slate-800', color: 'text-slate-400', badge: 'bg-slate-800 text-slate-400', icon: Activity };
+                  const Icon = cfg.icon;
+                  return (
+                    <div key={`${log.id}-${log.current_status}-${idx}`} className="bg-surface-900/30 px-4 py-2.5 rounded-lg border border-white/[0.02] flex items-center justify-between animate-slide-up hover:bg-surface-900/60 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-1.5 rounded-md ${cfg.bg} shrink-0`}>
+                          <Icon className={`w-3.5 h-3.5 ${cfg.color}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm text-white font-medium truncate flex items-center gap-2">
+                            {log.customer_name} 
+                            <span className="text-slate-500 font-normal text-xs">via {log.channel}</span>
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm text-white font-semibold truncate">
-                          {log.customer_name || 'Customer'}
-                          <span className="text-slate-500 font-normal ml-2 text-xs">{log.channel}</span>
-                        </p>
-                        <p className="text-xs text-slate-600 font-mono truncate mt-0.5">
-                          {log.idempotency_key?.substring(0, 20)}…
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-slate-600 font-mono">{log.ts}</span>
+                        <span className={`badge ${cfg.badge} shrink-0 text-[10px] py-0.5 px-1.5`}>
+                          {log.current_status}
+                        </span>
                       </div>
                     </div>
-                    <span className={`badge ${cfg.badge} shrink-0 ml-3`}>
-                      {log.current_status}
-                    </span>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { WebSocketServer } from 'ws';
 import axios from 'axios';
 import { generateAiInsights } from './openai-service.js';
 
@@ -127,15 +126,14 @@ const db = {
 };
 
 // ─────────────────────────────────────────────────────────
-// WEBSOCKET SERVER
+// SERVER START
 // ─────────────────────────────────────────────────────────
 const PORT = process.env.CRM_PORT || 5001;
 const server = app.listen(PORT, () => console.log(`🚀 CRM Service on port ${PORT}`));
-const wss = new WebSocketServer({ server });
 
+// Broadcast is now a no-op since frontend uses Supabase Realtime
 function broadcast(type, payload) {
-  const msg = JSON.stringify({ type, payload });
-  wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
+  // FinOps could be moved to Supabase Realtime in the future
 }
 
 // ─────────────────────────────────────────────────────────
@@ -196,6 +194,32 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
+// Get all message logs
+app.get('/api/logs', async (req, res) => {
+  try {
+    const logs = await db.getAllMessageLogs();
+    
+    // Enrich logs with customer details
+    const customers = await db.getCustomers();
+    const custMap = {};
+    customers.forEach(c => custMap[c.id] = c);
+    
+    const enrichedLogs = logs.map(log => {
+      const customer = custMap[log.customer_id] || {};
+      return {
+        ...log,
+        customer_name: customer.name || 'Unknown',
+        predicted_preferred_channel: customer.predicted_preferred_channel || 'UNKNOWN',
+        is_vip_rigid_routing: customer.is_vip_rigid_routing || false
+      };
+    });
+    
+    res.json(enrichedLogs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── DISPATCH ───
 app.post('/api/dispatch', async (req, res) => {
   const { campaign_id, target_channel, message_text } = req.body;
@@ -238,7 +262,12 @@ app.post('/api/dispatch', async (req, res) => {
       });
 
       // Enrich with customer name for the frontend
-      const enrichedLog = { ...logEntry, customer_name: customer.name };
+      const enrichedLog = { 
+        ...logEntry, 
+        customer_name: customer.name,
+        predicted_preferred_channel: customer.predicted_preferred_channel,
+        is_vip_rigid_routing: customer.is_vip_rigid_routing
+      };
       broadcast('LOG_UPDATE', enrichedLog);
       results.push(enrichedLog);
 
@@ -291,7 +320,12 @@ app.post('/api/webhook', async (req, res) => {
     // Broadcast to frontend
     const customers = await db.getCustomers();
     const customer = customers.find(c => c.id === updated.customer_id);
-    broadcast('LOG_UPDATE', { ...updated, customer_name: customer?.name || 'Unknown' });
+    broadcast('LOG_UPDATE', { 
+      ...updated, 
+      customer_name: customer?.name || 'Unknown',
+      predicted_preferred_channel: customer?.predicted_preferred_channel || 'UNKNOWN',
+      is_vip_rigid_routing: customer?.is_vip_rigid_routing || false
+    });
 
     res.status(200).json({ action: 'accepted', status });
   } catch (err) {
