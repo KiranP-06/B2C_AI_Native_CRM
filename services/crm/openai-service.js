@@ -130,3 +130,36 @@ export async function generateAiInsights({ prompt, forceLiveCall = false, useCac
 
   return { data, cost: calculatedCost, tokens: promptTokens + completionTokens, executionType };
 }
+
+export async function improveMessageText({ text }) {
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY || OPENAI_API_KEY.includes('1234qrst')) {
+    return "VIP Exclusive: " + text + " - Act now for 20% off!"; // Mock improvement
+  }
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'HTTP-Referer': 'http://localhost:5173',
+        'X-Title': 'AI-Native CRM',
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'You are an expert marketing copywriter. Improve the given message to be more engaging, professional, and persuasive. Return ONLY the improved text, no quotes or conversational filler.' },
+          { role: 'user', content: text },
+        ],
+      }),
+    });
+
+    if (!response.ok) throw new Error(`OpenAI API error`);
+    const json = await response.json();
+    return json.choices[0].message.content.trim();
+  } catch (err) {
+    console.warn(`[Improve AI] Error:`, err.message);
+    return text;
+  }
+}

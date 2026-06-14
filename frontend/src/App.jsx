@@ -15,14 +15,19 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ─── KPI Aggregation ───
 function computeKPIs(logs) {
-  const counts = { SENT: 0, DELIVERED: 0, OPENED: 0, CLICKED: 0, FAILED: 0 };
-  const total = logs.length;
-  logs.forEach(l => { if (counts[l.current_status] !== undefined) counts[l.current_status]++; });
-  const kpis = {};
-  for (const status in counts) {
-    kpis[status] = total > 0 ? Math.round((counts[status] / total) * 100) : 0;
+  let failed = 0, clicked = 0, opened = 0, delivered = 0, sent = logs.length;
+  logs.forEach(l => {
+    if (l.current_status === 'FAILED') failed++;
+    else if (l.current_status === 'CLICKED') { clicked++; opened++; delivered++; }
+    else if (l.current_status === 'OPENED') { opened++; delivered++; }
+    else if (l.current_status === 'DELIVERED') { delivered++; }
+  });
+  const raw = { SENT: sent, DELIVERED: delivered, OPENED: opened, CLICKED: clicked, FAILED: failed };
+  const percentages = {};
+  for (const status in raw) {
+    percentages[status] = sent > 0 ? Math.round((raw[status] / sent) * 100) : 0;
   }
-  return { percentages: kpis, raw: counts, total };
+  return { percentages, raw, total: sent };
 }
 
 const STATUS_CONFIG = {
@@ -45,6 +50,8 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [eventFeed, setEventFeed] = useState([]);
   const [selectedStatus, setSelectedStatus] = useState(null);
+  const [selectedMetric, setSelectedMetric] = useState(null);
+  const [improving, setImproving] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
 
@@ -159,6 +166,22 @@ export default function App() {
       }
     } catch (e) { console.error('Dispatch error:', e); }
     finally { setDispatching(false); }
+  };
+
+  // ─── Improve Message with AI ───
+  const handleImproveText = async () => {
+    if (!message) return;
+    setImproving(true);
+    try {
+      const res = await fetch('/api/improve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: message })
+      });
+      const data = await res.json();
+      if (data.improved) setMessage(data.improved);
+    } catch (e) { console.error('Improve error:', e); }
+    finally { setImproving(false); }
   };
 
   // ─── AI Insights ───
@@ -317,6 +340,17 @@ export default function App() {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                 />
+                {message && (
+                  <button
+                    onClick={handleImproveText}
+                    disabled={improving}
+                    className="mt-2 w-full flex items-center justify-center gap-2 text-sm py-2 px-4 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-all font-semibold disabled:opacity-50"
+                  >
+                    {improving
+                      ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Improving...</>
+                      : <><Sparkles className="w-3.5 h-3.5" /> Improve with AI</>}
+                  </button>
+                )}
               </div>
               <button
                 onClick={triggerDispatch}
@@ -334,7 +368,10 @@ export default function App() {
         {/* ─── Right: Live Delivery Metrics ─── */}
         <div className="lg:col-span-8 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="glass-card p-6 border-t-2 border-t-accent-light">
+            <div 
+              onClick={() => setSelectedMetric(selectedMetric === 'dispatched' ? null : 'dispatched')}
+              className={`glass-card p-6 border-t-2 border-t-accent-light cursor-pointer transition-all hover:bg-surface-900/60 ${selectedMetric === 'dispatched' ? 'ring-2 ring-accent-light' : ''}`}
+            >
               <div className="flex items-center gap-2 mb-2">
                 <Target className="w-5 h-5 text-accent-light" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Total Dispatched</h3>
@@ -343,7 +380,10 @@ export default function App() {
               <p className="text-xs text-slate-500 mt-2">Active campaign messages</p>
             </div>
             
-            <div className="glass-card p-6 border-t-2 border-t-emerald-500">
+            <div 
+              onClick={() => setSelectedMetric(selectedMetric === 'optimized' ? null : 'optimized')}
+              className={`glass-card p-6 border-t-2 border-t-emerald-500 cursor-pointer transition-all hover:bg-surface-900/60 ${selectedMetric === 'optimized' ? 'ring-2 ring-emerald-500' : ''}`}
+            >
               <div className="flex items-center gap-2 mb-2">
                 <TrendingUp className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Optimized Routes</h3>
@@ -352,7 +392,10 @@ export default function App() {
               <p className="text-xs text-emerald-500/70 mt-2 font-medium">Smart channel fallbacks applied</p>
             </div>
 
-            <div className="glass-card p-6 border-t-2 border-t-purple-500">
+            <div 
+              onClick={() => setSelectedMetric(selectedMetric === 'bypass' ? null : 'bypass')}
+              className={`glass-card p-6 border-t-2 border-t-purple-500 cursor-pointer transition-all hover:bg-surface-900/60 ${selectedMetric === 'bypass' ? 'ring-2 ring-purple-500' : ''}`}
+            >
               <div className="flex items-center gap-2 mb-2">
                 <Users className="w-5 h-5 text-purple-400" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Guardrail Bypasses</h3>
@@ -362,27 +405,69 @@ export default function App() {
             </div>
           </div>
 
-          <div className="glass-card p-6 flex flex-col" style={{ minHeight: '344px' }}>
+          {/* ─── Metric Detail Panel ─── */}
+          {selectedMetric && (
+            <div className="glass-card p-4 animate-slide-down border-l-4" style={{ borderLeftColor: selectedMetric === 'dispatched' ? 'var(--accent)' : selectedMetric === 'optimized' ? '#10b981' : '#a855f7' }}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  {selectedMetric === 'dispatched' && <><Target className="w-4 h-4 text-accent-light" /> All Dispatched Messages</>}
+                  {selectedMetric === 'optimized' && <><TrendingUp className="w-4 h-4 text-emerald-400" /> Optimized Route Details</>}
+                  {selectedMetric === 'bypass' && <><Users className="w-4 h-4 text-purple-400" /> VIP Guardrail Bypass Details</>}
+                </h3>
+                <button onClick={() => setSelectedMetric(null)} className="text-xs text-slate-400 hover:text-white">Close</button>
+              </div>
+              <div className="max-h-48 overflow-y-auto pr-2 space-y-1.5">
+                {(() => {
+                  let filtered = [];
+                  if (selectedMetric === 'dispatched') filtered = logs;
+                  else if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.predicted_preferred_channel && !l.is_vip_rigid_routing);
+                  else if (selectedMetric === 'bypass') filtered = logs.filter(l => l.is_vip_rigid_routing);
+                  
+                  if (filtered.length === 0) return <p className="text-sm text-slate-500 italic text-center py-4">No records in this category.</p>;
+                  
+                  return filtered.slice(0, 50).map(l => {
+                    const cfg = STATUS_CONFIG[l.current_status] || { bg: 'bg-slate-800', color: 'text-slate-400', badge: 'bg-slate-800 text-slate-400', icon: Activity };
+                    return (
+                      <div key={l.id} className="bg-surface-900/50 px-3 py-2 rounded-lg flex items-center justify-between border border-white/[0.02]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium text-slate-200 truncate">{l.customer_name}</span>
+                          <span className="text-xs text-slate-500">via {l.channel}</span>
+                          {selectedMetric === 'optimized' && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">preferred: {l.predicted_preferred_channel}</span>}
+                          {selectedMetric === 'bypass' && <span className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">VIP Locked</span>}
+                        </div>
+                        <span className={`badge ${cfg.badge} shrink-0 text-[10px] py-0.5 px-1.5`}>{l.current_status}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
+
+          <div className="glass-card p-6 flex flex-col" style={{ height: '360px' }}>
             <div className="flex items-center justify-between mb-4 border-b border-white/[0.04] pb-4">
               <h2 className="font-bold text-white flex items-center gap-2">
                 <Radio className="w-4 h-4 text-accent-light" />
                 Recent Delivery Activity
               </h2>
-              {wsConnected && (
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-600">Showing {Math.min(eventFeed.length, 15)} of {eventFeed.length}</span>
+                {wsConnected && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2" style={{ minHeight: 0 }}>
               {eventFeed.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 pb-8">
                   <Activity className="w-8 h-8 mb-3 opacity-30" />
                   <p className="font-medium text-sm">No recent activity</p>
                 </div>
               ) : (
-                eventFeed.slice(0, 8).map((log, idx) => {
+                eventFeed.slice(0, 15).map((log, idx) => {
                   const cfg = STATUS_CONFIG[log.current_status] || { bg: 'bg-slate-800', color: 'text-slate-400', badge: 'bg-slate-800 text-slate-400', icon: Activity };
                   const Icon = cfg.icon;
                   return (

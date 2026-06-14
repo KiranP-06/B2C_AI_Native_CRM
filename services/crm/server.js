@@ -3,7 +3,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { generateAiInsights } from './openai-service.js';
+import { generateAiInsights, improveMessageText } from './openai-service.js';
 
 dotenv.config({ path: '../../.env' });
 
@@ -369,6 +369,18 @@ async function getFinOpsStats() {
 app.get('/api/finops', async (req, res) => {
   try {
     res.json(await getFinOpsStats());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── IMPROVE MESSAGE ───
+app.post('/api/improve', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+    const improved = await improveMessageText({ text });
+    res.json({ improved });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
