@@ -40,15 +40,34 @@ app.post('/send', (req, res) => {
     }, finalDelay);
   };
 
-  // Schedule Webhooks
-  // 1s -> SENT
-  // 3s -> DELIVERED
-  // 6s -> OPENED
-  // 10s -> CLICKED
+  // Simulate a realistic marketing funnel drop-off
+  const rand = Math.random();
+  
+  // 5% fail immediately
+  if (rand < 0.05) {
+    triggerWebhook('FAILED', 500);
+    return;
+  }
+  
   triggerWebhook('SENT', 1000);
-  triggerWebhook('DELIVERED', 3000);
-  triggerWebhook('OPENED', 6000);
-  triggerWebhook('CLICKED', 10000);
+  
+  // 90% delivered
+  if (rand < 0.95) {
+    triggerWebhook('DELIVERED', 3000);
+    
+    // 50% opened
+    if (rand < 0.50) {
+      triggerWebhook('OPENED', 6000);
+      
+      // 20% clicked
+      if (rand < 0.20) {
+        triggerWebhook('CLICKED', 10000);
+      }
+    }
+  } else {
+    // 5% fail after being sent
+    triggerWebhook('FAILED', 4000);
+  }
 });
 
 const port = 5002;

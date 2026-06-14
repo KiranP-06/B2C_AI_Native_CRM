@@ -16,18 +16,24 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // ─── KPI Aggregation ───
 function computeKPIs(logs) {
   let failed = 0, clicked = 0, opened = 0, delivered = 0, sent = logs.length;
+  let optimized = 0;
   logs.forEach(l => {
+    const isOpt = l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing;
+    if (isOpt) optimized++;
+    
     if (l.current_status === 'FAILED') failed++;
     else if (l.current_status === 'CLICKED') { clicked++; opened++; delivered++; }
     else if (l.current_status === 'OPENED') { opened++; delivered++; }
     else if (l.current_status === 'DELIVERED') { delivered++; }
   });
-  const raw = { SENT: sent, DELIVERED: delivered, OPENED: opened, CLICKED: clicked, FAILED: failed };
+  
+  const initialFailures = failed + optimized;
+  const raw = { SENT: sent, DELIVERED: delivered, OPENED: opened, CLICKED: clicked, FAILED: initialFailures };
   const percentages = {};
   for (const status in raw) {
     percentages[status] = sent > 0 ? Math.round((raw[status] / sent) * 100) : 0;
   }
-  return { percentages, raw, total: sent };
+  return { percentages, raw, total: sent, actualFailed: failed, optimizedCount: optimized, initialFailures };
 }
 
 const STATUS_CONFIG = {
@@ -109,7 +115,7 @@ export default function App() {
             const idx = prev.findIndex(l => l.id === enrichedLog.id);
             if (idx >= 0) {
               const next = [...prev];
-              next[idx] = enrichedLog;
+              next[idx] = { ...prev[idx], ...enrichedLog };
               return next;
             }
             return [enrichedLog, ...prev];
@@ -163,6 +169,9 @@ export default function App() {
           const newEvents = data.results.map(l => ({ ts: new Date().toLocaleTimeString(), ...l }));
           return [...newEvents, ...prev].slice(0, 50);
         });
+        // Clear form fields after successful dispatch
+        setMessage('');
+        setChannel('WHATSAPP');
       }
     } catch (e) { console.error('Dispatch error:', e); }
     finally { setDispatching(false); }
@@ -197,10 +206,18 @@ export default function App() {
     finally { setLoadingInsights(false); }
   };
 
-  const kpiData = computeKPIs(logs);
+  // ─── Data Slicing ───
+  const currentCampaignId = logs.length > 0 ? logs[0].campaign_id : null;
+  const currentDispatchLogs = currentCampaignId ? logs.filter(l => l.campaign_id === currentCampaignId) : [];
+  
+  const kpiData = computeKPIs(currentDispatchLogs);
+  const currentOptimizedCount = kpiData.optimizedCount;
+  const currentInitialFailures = kpiData.initialFailures;
+  const currentOptimizedRate = currentInitialFailures > 0 ? Math.round((currentOptimizedCount / currentInitialFailures) * 100) : 0;
 
-  const optimizedCount = logs.filter(l => l.channel !== l.predicted_preferred_channel && !l.is_vip_rigid_routing).length;
-  const bypassCount = logs.filter(l => l.is_vip_rigid_routing).length;
+  const lifetimeTotal = logs.length;
+  const lifetimeOptimizedCount = logs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing).length;
+  const lifetimeBypassCount = logs.filter(l => l.is_vip_rigid_routing).length;
   return (
     <div className="min-h-screen px-4 py-6 sm:px-6 lg:px-8 max-w-[1440px] mx-auto">
 
@@ -227,8 +244,19 @@ export default function App() {
         </div>
       </header>
 
-      {/* ═══ KPI Strip ═══ */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+      {/* ═══ KPI Strip (Current Dispatch) ═══ */}
+      <div className="flex items-center justify-between mb-4 mt-2">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <Radio className="w-5 h-5 text-accent-light" />
+          Current Dispatch Stats
+        </h2>
+        {currentCampaignId && (
+          <div className="badge bg-surface-900 text-slate-400 border border-white/5 px-2.5 py-1 text-[10px] font-mono tracking-wide shadow-sm">
+            Campaign ID: {currentCampaignId.split('-')[0]}
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 mb-6">
         {Object.entries(kpiData.percentages).map(([status, percentage]) => {
           const cfg = STATUS_CONFIG[status];
           const Icon = cfg.icon;
@@ -252,6 +280,23 @@ export default function App() {
             </div>
           );
         })}
+        
+        {/* Optimized Routes (Current) Box */}
+        <div 
+          onClick={() => setSelectedStatus(selectedStatus === 'optimized' ? null : 'optimized')}
+          className={`stat-chip flex flex-col items-start gap-2 animate-fade-in cursor-pointer transition-all hover:bg-surface-900/60 border-t-2 border-t-emerald-500/50 ${selectedStatus === 'optimized' ? 'ring-2 ring-emerald-500 bg-surface-900' : ''}`}
+        >
+          <div className="flex items-center justify-between w-full">
+            <div className="p-1.5 rounded-md bg-emerald-500/10">
+              <TrendingUp className="w-4 h-4 text-emerald-400" />
+            </div>
+            <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">Optimized</span>
+          </div>
+          <div className="flex items-baseline gap-2 mt-1">
+            <p className="text-3xl font-bold text-white">{currentOptimizedRate}%</p>
+            <p className="text-xs text-slate-400">({currentOptimizedCount})</p>
+          </div>
+        </div>
       </div>
 
       {/* ═══ Contextual Details ═══ */}
@@ -259,22 +304,50 @@ export default function App() {
         <div className="glass-card p-4 mb-6 animate-slide-down border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-bold text-white flex items-center gap-2">
-              {STATUS_CONFIG[selectedStatus].icon && React.createElement(STATUS_CONFIG[selectedStatus].icon, { className: `w-4 h-4 ${STATUS_CONFIG[selectedStatus].color}` })}
-              Customers {selectedStatus}
+              {selectedStatus === 'optimized' ? (
+                <><TrendingUp className="w-4 h-4 text-emerald-400" /> Optimized Routes</>
+              ) : (
+                <>{STATUS_CONFIG[selectedStatus].icon && React.createElement(STATUS_CONFIG[selectedStatus].icon, { className: `w-4 h-4 ${STATUS_CONFIG[selectedStatus].color}` })} Customers {selectedStatus}</>
+              )}
             </h3>
-            <button onClick={() => setSelectedStatus(null)} className="text-xs text-slate-400 hover:text-white">Close Context</button>
+            <button onClick={() => setSelectedStatus(null)} className="text-xs text-slate-400 hover:text-white">Close</button>
           </div>
-          <div className="max-h-48 overflow-y-auto pr-2 flex flex-wrap gap-2">
-            {logs.filter(l => l.current_status === selectedStatus).length === 0 ? (
-              <p className="text-sm text-slate-500 italic w-full text-center py-4">No customers currently in this status.</p>
-            ) : (
-              logs.filter(l => l.current_status === selectedStatus).map(l => (
-                <div key={l.id} className="bg-surface-900/80 px-3 py-1.5 rounded flex items-center gap-2 text-sm text-slate-200 border border-white/[0.03]">
-                  <span className="font-medium">{l.customer_name}</span>
-                  <span className="text-xs text-slate-500">via {l.channel}</span>
+          <div className="max-h-48 overflow-y-auto pr-2 w-full">
+            {(() => {
+              // Match cumulative KPI logic: SENT=all, DELIVERED=DELIVERED+OPENED+CLICKED, etc.
+              const STATUS_HIERARCHY = ['FAILED', 'SENT', 'DELIVERED', 'OPENED', 'CLICKED'];
+              const selectedIdx = STATUS_HIERARCHY.indexOf(selectedStatus);
+              const filtered = selectedStatus === 'optimized'
+                ? currentDispatchLogs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing)
+                : selectedStatus === 'FAILED'
+                ? currentDispatchLogs.filter(l => l.current_status === 'FAILED' || (l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing))
+                : currentDispatchLogs.filter(l => {
+                    const logIdx = STATUS_HIERARCHY.indexOf(l.current_status);
+                    return logIdx >= selectedIdx && l.current_status !== 'FAILED';
+                  });
+              if (filtered.length === 0) return (
+                <p className="text-sm text-slate-500 italic w-full text-center py-4">No customers currently in this status.</p>
+              );
+              return (
+                <div className="space-y-1.5">
+                  {filtered.map(l => {
+                    const cfg = STATUS_CONFIG[l.current_status] || { bg: 'bg-slate-800', color: 'text-slate-400', badge: 'bg-slate-800 text-slate-400', icon: Activity };
+                    const isOpt = l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing;
+                    return (
+                      <div key={l.id} className="bg-surface-900/50 px-3 py-2 rounded-lg flex items-center justify-between border border-white/[0.02]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium text-slate-200 truncate">{l.customer_name}</span>
+                          <span className="text-xs text-slate-500">via {l.channel}</span>
+                          {selectedStatus === 'optimized' && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">original target: {l.target_channel}</span>}
+                          {selectedStatus === 'FAILED' && isOpt && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">fallback applied</span>}
+                        </div>
+                        <span className={`badge ${cfg.badge} shrink-0 text-[10px] py-0.5 px-1.5`}>{l.current_status}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
@@ -367,6 +440,12 @@ export default function App() {
 
         {/* ─── Right: Live Delivery Metrics ─── */}
         <div className="lg:col-span-8 space-y-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <Activity className="w-5 h-5 text-accent-light" />
+              Lifetime Stats
+            </h2>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div 
               onClick={() => setSelectedMetric(selectedMetric === 'dispatched' ? null : 'dispatched')}
@@ -376,7 +455,7 @@ export default function App() {
                 <Target className="w-5 h-5 text-accent-light" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Total Dispatched</h3>
               </div>
-              <p className="text-4xl font-black text-white">{kpiData.total}</p>
+              <p className="text-4xl font-black text-white">{lifetimeTotal}</p>
               <p className="text-xs text-slate-500 mt-2">Active campaign messages</p>
             </div>
             
@@ -388,7 +467,7 @@ export default function App() {
                 <TrendingUp className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Optimized Routes</h3>
               </div>
-              <p className="text-4xl font-black text-white">{optimizedCount}</p>
+              <p className="text-4xl font-black text-white">{lifetimeOptimizedCount}</p>
               <p className="text-xs text-emerald-500/70 mt-2 font-medium">Smart channel fallbacks applied</p>
             </div>
 
@@ -400,7 +479,7 @@ export default function App() {
                 <Users className="w-5 h-5 text-purple-400" />
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Guardrail Bypasses</h3>
               </div>
-              <p className="text-4xl font-black text-white">{bypassCount}</p>
+              <p className="text-4xl font-black text-white">{lifetimeBypassCount}</p>
               <p className="text-xs text-purple-500/70 mt-2 font-medium">Strict VIP routing enforced</p>
             </div>
           </div>
@@ -420,7 +499,7 @@ export default function App() {
                 {(() => {
                   let filtered = [];
                   if (selectedMetric === 'dispatched') filtered = logs;
-                  else if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.predicted_preferred_channel && !l.is_vip_rigid_routing);
+                  else if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
                   else if (selectedMetric === 'bypass') filtered = logs.filter(l => l.is_vip_rigid_routing);
                   
                   if (filtered.length === 0) return <p className="text-sm text-slate-500 italic text-center py-4">No records in this category.</p>;
@@ -432,7 +511,7 @@ export default function App() {
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm font-medium text-slate-200 truncate">{l.customer_name}</span>
                           <span className="text-xs text-slate-500">via {l.channel}</span>
-                          {selectedMetric === 'optimized' && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">preferred: {l.predicted_preferred_channel}</span>}
+                          {selectedMetric === 'optimized' && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">original target: {l.target_channel}</span>}
                           {selectedMetric === 'bypass' && <span className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">VIP Locked</span>}
                         </div>
                         <span className={`badge ${cfg.badge} shrink-0 text-[10px] py-0.5 px-1.5`}>{l.current_status}</span>
@@ -545,7 +624,7 @@ export default function App() {
                   <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-accent-light transition-colors" />
                 </div>
                 <h3 className="text-base font-bold text-white mb-2 group-hover:text-accent-light transition-colors leading-snug">
-                  {card.suggested_strategy}
+                  {card.shopper_suggestives || card.suggested_strategy}
                 </h3>
                 <p className="text-sm text-slate-400 leading-relaxed mb-4">{card.trend}</p>
                 <div className="bg-surface-900/60 p-3 rounded-xl border border-white/[0.04]">

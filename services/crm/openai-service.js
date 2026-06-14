@@ -17,25 +17,25 @@ function getMockInsights() {
     insights: [
       {
         trend: "VIP customers show 40% higher lifetime value but 25% lower campaign engagement rate this quarter.",
-        suggested_strategy: "Launch an exclusive VIP loyalty program with personalized offers and early access to new products.",
+        shopper_suggestives: "Launch an exclusive VIP loyalty program with personalized offers and early access to new products.",
         audience_segment: "VIP Customers (is_vip_rigid_routing = true)",
         message_draft: "Hi {{name}}, as a valued VIP member, enjoy exclusive early access to our summer collection with 25% off. Use code: VIP25"
       },
       {
         trend: "WhatsApp channel shows 3.2x higher open rates compared to email across all segments.",
-        suggested_strategy: "Shift primary campaign delivery to WhatsApp with rich media attachments for maximum engagement.",
+        shopper_suggestives: "Shift primary campaign delivery to WhatsApp with rich media attachments for maximum engagement.",
         audience_segment: "All Customers (Channel = WHATSAPP)",
         message_draft: "Hey {{name}}! 🎉 We have exciting offers just for you. Check out our latest deals and save big this week!"
       },
       {
         trend: "Customers with both email and phone on file have 60% higher conversion rates on multi-channel campaigns.",
-        suggested_strategy: "Run a data enrichment campaign to capture missing contact fields from single-channel customers.",
+        shopper_suggestives: "Run a data enrichment campaign to capture missing contact fields from single-channel customers.",
         audience_segment: "Incomplete Profile Customers",
         message_draft: "Hi {{name}}, update your profile to unlock exclusive rewards! Add your {{missing_field}} to get 10% off your next order."
       },
       {
         trend: "SMS delivery rates peak between 10 AM - 2 PM local time with 95% read rates within 3 minutes.",
-        suggested_strategy: "Schedule all SMS campaigns within the 10AM-2PM window to maximize time-sensitive offer uptake.",
+        shopper_suggestives: "Schedule all SMS campaigns within the 10AM-2PM window to maximize time-sensitive offer uptake.",
         audience_segment: "SMS Subscribers (Channel = SMS)",
         message_draft: "{{name}}, flash sale alert! 🔥 50% off for the next 2 hours only. Shop now: {{link}}"
       }

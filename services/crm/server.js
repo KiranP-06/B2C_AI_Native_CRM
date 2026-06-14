@@ -111,6 +111,11 @@ const db = {
     return [...memDb.messageLogs].reverse();
   },
 
+  async getCampaigns() {
+    if (usingPrisma) return prisma.campaign.findMany();
+    return memDb.campaigns;
+  },
+
   // Token Ledger
   async createTokenLedger(data) {
     if (usingPrisma) return prisma.tokenLedger.create({ data });
@@ -199,10 +204,19 @@ app.get('/api/logs', async (req, res) => {
   try {
     const logs = await db.getAllMessageLogs();
     
-    // Enrich logs with customer details
+    // Enrich logs with customer details and campaign targets
     const customers = await db.getCustomers();
     const custMap = {};
     customers.forEach(c => custMap[c.id] = c);
+    
+    const campaigns = await db.getCampaigns();
+    const campMap = {};
+    campaigns.forEach(c => {
+      // Extract target_channel from "channel=WHATSAPP"
+      if (c.target_segment_query) {
+        campMap[c.id] = c.target_segment_query.split('=')[1];
+      }
+    });
     
     const enrichedLogs = logs.map(log => {
       const customer = custMap[log.customer_id] || {};
@@ -210,7 +224,8 @@ app.get('/api/logs', async (req, res) => {
         ...log,
         customer_name: customer.name || 'Unknown',
         predicted_preferred_channel: customer.predicted_preferred_channel || 'UNKNOWN',
-        is_vip_rigid_routing: customer.is_vip_rigid_routing || false
+        is_vip_rigid_routing: customer.is_vip_rigid_routing || false,
+        target_channel: campMap[log.campaign_id] || 'UNKNOWN'
       };
     });
     
@@ -261,12 +276,13 @@ app.post('/api/dispatch', async (req, res) => {
         idempotency_key,
       });
 
-      // Enrich with customer name for the frontend
+      // Enrich with customer name and target channel for the frontend
       const enrichedLog = { 
         ...logEntry, 
         customer_name: customer.name,
         predicted_preferred_channel: customer.predicted_preferred_channel,
-        is_vip_rigid_routing: customer.is_vip_rigid_routing
+        is_vip_rigid_routing: customer.is_vip_rigid_routing,
+        target_channel: target_channel
       };
       broadcast('LOG_UPDATE', enrichedLog);
       results.push(enrichedLog);
@@ -341,7 +357,7 @@ app.post('/api/insights', async (req, res) => {
     const logs = await db.getAllMessageLogs();
     // Slice logs to last 100 to fit in context window and avoid token limits
     const recentLogs = logs.slice(0, 100);
-    const prompt = `You are a CRM Data Analyst. Analyze this dataset and return a strict JSON object with an "insights" array. Each insight must have: trend, suggested_strategy, audience_segment, message_draft. Customers: ${JSON.stringify(customers)}. Recent Message History: ${JSON.stringify(recentLogs)}`;
+    const prompt = `You are a CRM Data Analyst. Analyze this dataset and return a strict JSON object with an "insights" array. Each insight must have: trend, shopper_suggestives (actionable recommendations for shopper like next best action, discounts, or products), audience_segment, and message_draft (a highly tailored, ready-to-send crafted message). Use generalized, universal placeholders like {{Customer Name}} instead of specific real names in the message_draft. Customers: ${JSON.stringify(customers)}. Recent Message History: ${JSON.stringify(recentLogs)}`;
 
     const result = await generateAiInsights({ prompt, dbLayer: db });
 
