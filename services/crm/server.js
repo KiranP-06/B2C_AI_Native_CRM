@@ -5,10 +5,27 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import { generateAiInsights, improveMessageText } from './openai-service.js';
 
+// Load .env — try project root first (local dev), then current dir (production)
 dotenv.config({ path: '../../.env' });
+dotenv.config(); // also try local .env as fallback
 
 const app = express();
-app.use(cors());
+
+// CORS: Allow frontend origin in production
+const allowedOrigins = [
+  'http://localhost:5173',
+  process.env.FRONTEND_URL?.replace(/\/$/, ''), // remove trailing slash if any
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(o => origin.startsWith(o))) return callback(null, true);
+    callback(null, true); // permissive fallback — tighten in production if needed
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // ─────────────────────────────────────────────────────────
@@ -133,8 +150,10 @@ const db = {
 // ─────────────────────────────────────────────────────────
 // SERVER START
 // ─────────────────────────────────────────────────────────
-const PORT = process.env.CRM_PORT || 5001;
+const PORT = process.env.PORT || process.env.CRM_PORT || 5001;
 const server = app.listen(PORT, () => console.log(`🚀 CRM Service on port ${PORT}`));
+
+const MOCK_CHANNEL_URL = process.env.MOCK_CHANNEL_URL || 'http://localhost:5002';
 
 // Broadcast is now a no-op since frontend uses Supabase Realtime
 function broadcast(type, payload) {
@@ -289,7 +308,7 @@ app.post('/api/dispatch', async (req, res) => {
 
       // Fire to Mock Channel Service if deliverable
       if (canDeliver) {
-        axios.post('http://localhost:5002/send', {
+        axios.post(`${MOCK_CHANNEL_URL}/send`, {
           idempotency_key,
           campaign_id,
           customer_id: customer.id,

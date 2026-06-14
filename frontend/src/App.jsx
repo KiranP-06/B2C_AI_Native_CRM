@@ -13,6 +13,9 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://qmvfmwycfazrnn
 const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || 'sb_publishable_V56orvYiqzHQEVFxHqQUlA_U1qUFk-v';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// ─── API Base URL (empty for local dev w/ Vite proxy, full URL for production) ───
+const API_BASE = import.meta.env.VITE_API_BASE || '';
+
 // ─── KPI Aggregation ───
 function computeKPIs(logs) {
   let failed = 0, clicked = 0, opened = 0, delivered = 0, sent = logs.length;
@@ -66,7 +69,7 @@ export default function App() {
   // ─── Fetch Initial Data ───
   useEffect(() => {
     // Fetch customers
-    fetch('/api/customers')
+    fetch(`${API_BASE}/api/customers`)
       .then(r => r.json())
       .then(data => {
         const cMap = {};
@@ -76,10 +79,10 @@ export default function App() {
       .catch(console.error);
       
     // Fetch initial FinOps stats
-    fetch('/api/finops').then(r => r.json()).then(setFinops).catch(() => {});
+    fetch(`${API_BASE}/api/finops`).then(r => r.json()).then(setFinops).catch(() => {});
 
     // Fetch initial logs
-    fetch('/api/logs')
+    fetch(`${API_BASE}/api/logs`)
       .then(r => r.json())
       .then(data => {
         setLogs(data);
@@ -144,7 +147,7 @@ export default function App() {
   const triggerDispatch = async () => {
     setDispatching(true);
     try {
-      const res = await fetch('/api/dispatch', {
+      const res = await fetch(`${API_BASE}/api/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -182,7 +185,7 @@ export default function App() {
     if (!message) return;
     setImproving(true);
     try {
-      const res = await fetch('/api/improve', {
+      const res = await fetch(`${API_BASE}/api/improve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: message })
@@ -197,11 +200,11 @@ export default function App() {
   const loadInsights = async () => {
     setLoadingInsights(true);
     try {
-      const res = await fetch('/api/insights', { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/insights`, { method: 'POST' });
       const data = await res.json();
       setInsights(data.data?.insights || []);
       // refresh finops
-      fetch('/api/finops').then(r => r.json()).then(setFinops).catch(() => {});
+      fetch(`${API_BASE}/api/finops`).then(r => r.json()).then(setFinops).catch(() => {});
     } catch (e) { console.error('Insights error:', e); }
     finally { setLoadingInsights(false); }
   };

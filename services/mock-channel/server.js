@@ -1,6 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: '../../.env' });
+dotenv.config();
+
+const CRM_URL = process.env.BACKEND_URL || 'http://localhost:5001';
 
 const app = express();
 app.use(cors());
@@ -29,7 +35,7 @@ app.post('/send', (req, res) => {
 
     setTimeout(async () => {
       try {
-        await axios.post('http://localhost:5001/api/webhook', {
+        await axios.post(`${CRM_URL}/api/webhook`, {
           idempotency_key,
           status
         });
