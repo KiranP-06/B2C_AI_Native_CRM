@@ -2,7 +2,8 @@
 
 A next-generation, AI-powered Customer Relationship Management (CRM) system designed for omnichannel B2C marketing. Built with modern web technologies, this platform features an intelligent dynamic routing engine, real-time message tracking, and proactive AI-driven insights to maximize customer engagement and minimize delivery failures.
 
-**🟢 Live Demo:** [https://b2-c-ai-native-crm-frontend.vercel.app](https://b2-c-ai-native-crm-frontend.vercel.app)
+**🟢 Live Demo (Frontend):** [https://b2-c-ai-native-crm-frontend.vercel.app](https://b2-c-ai-native-crm-frontend.vercel.app)  
+**⚙️ Live API (Backend):** [https://b2c-ai-native-crm.onrender.com/api/health](https://b2c-ai-native-crm.onrender.com/api/health)
 
 ---
 
