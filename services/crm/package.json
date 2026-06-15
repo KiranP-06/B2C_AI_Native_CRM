@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node ../mock-channel/server.js & node server.js",
+    "start": "node mock-server.js & node server.js",
     "dev": "node server.js",
     "build": "prisma generate",
     "prisma:generate": "prisma generate"
