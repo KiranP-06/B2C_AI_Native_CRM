@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { generateAiInsights, improveMessageText } from './openai-service.js';
+import './mock-server.js';
 
 // Load .env — try project root first (local dev), then current dir (production)
 dotenv.config({ path: '../../.env' });
