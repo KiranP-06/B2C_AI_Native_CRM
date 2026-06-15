@@ -500,12 +500,13 @@ export default function App() {
               </div>
               <div className="max-h-[30rem] overflow-y-auto pr-2 space-y-1.5">
                 {(() => {
-                  if (selectedMetric === 'dispatched') {
+                  if (selectedMetric === 'dispatched' || selectedMetric === 'bypass') {
                     const channels = ['WHATSAPP', 'SMS', 'RCS', 'EMAIL'];
+                    const sourceLogs = selectedMetric === 'bypass' ? logs.filter(l => l.is_vip_rigid_routing) : logs;
                     return (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pb-2 mt-2">
                         {channels.map(ch => {
-                          const chLogs = logs.filter(l => l.channel === ch);
+                          const chLogs = sourceLogs.filter(l => l.channel === ch);
                           const stats = computeKPIs(chLogs);
                           return (
                             <div key={ch} className="bg-surface-900/50 p-4 rounded-xl border border-white/[0.02] space-y-3">
@@ -571,7 +572,7 @@ export default function App() {
                                 const count = logs.filter(l => l.channel === ch && l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing && l.current_status === 'FAILED').length;
                                 return (
                                   <td key={ch} className="py-4 text-center">
-                                    <span className="text-xl font-bold text-red-400">{count}</span>
+                                    <span className="text-3xl font-bold text-red-400">{count}</span>
                                   </td>
                                 );
                               })}
@@ -581,28 +582,8 @@ export default function App() {
                       </div>
                     );
                   }
-
-                  let filtered = [];
-                  if (selectedMetric === 'bypass') {
-                    filtered = logs.filter(l => l.is_vip_rigid_routing);
-                  }
                   
-                  if (filtered.length === 0) return <p className="text-sm text-slate-500 italic text-center py-4">No records in this category.</p>;
-                  
-                  return filtered.slice(0, 50).map(l => {
-                    const cfg = STATUS_CONFIG[l.current_status] || { bg: 'bg-slate-800', color: 'text-slate-400', badge: 'bg-slate-800 text-slate-400', icon: Activity };
-                    return (
-                      <div key={l.id} className="bg-surface-900/50 px-3 py-2 rounded-lg flex items-center justify-between border border-white/[0.02]">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm font-medium text-slate-200 truncate">{l.customer_name}</span>
-                          <span className="text-xs text-slate-500">via {l.channel}</span>
-                          {selectedMetric === 'optimized' && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">original target: {l.target_channel}</span>}
-                          {selectedMetric === 'bypass' && <span className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">VIP Locked</span>}
-                        </div>
-                        <span className={`badge ${cfg.badge} shrink-0 text-[10px] py-0.5 px-1.5`}>{l.current_status}</span>
-                      </div>
-                    );
-                  });
+                  return null;
                 })()}
               </div>
             </div>
