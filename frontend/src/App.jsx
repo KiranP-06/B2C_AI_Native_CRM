@@ -558,7 +558,7 @@ export default function App() {
                                 const count = logs.filter(l => l.channel === ch && l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing).length;
                                 return (
                                   <td key={ch} className="py-4 text-center">
-                                    <span className="text-3xl font-bold text-emerald-400">{count}</span>
+                                    <span className="text-xl font-bold text-emerald-400">{count}</span>
                                   </td>
                                 );
                               })}
@@ -572,7 +572,7 @@ export default function App() {
                                 const count = logs.filter(l => l.channel === ch && l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing && l.current_status === 'FAILED').length;
                                 return (
                                   <td key={ch} className="py-4 text-center">
-                                    <span className="text-3xl font-bold text-red-400">{count}</span>
+                                    <span className="text-xl font-bold text-red-400">{count}</span>
                                   </td>
                                 );
                               })}
