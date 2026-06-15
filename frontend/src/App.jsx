@@ -531,9 +531,33 @@ export default function App() {
                     );
                   }
 
+                  if (selectedMetric === 'optimized') {
+                    const channelNames = { 'WHATSAPP': 'WhatsApp', 'SMS': 'SMS', 'RCS': 'RCS', 'EMAIL': 'Email' };
+                    const channels = ['WHATSAPP', 'SMS', 'RCS', 'EMAIL'];
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pb-2 mt-2">
+                        {channels.map(ch => {
+                          const chLogs = logs.filter(l => l.channel === ch);
+                          const stats = computeKPIs(chLogs);
+                          const optPct = stats.total > 0 ? Math.round((stats.optimizedCount / stats.total) * 100) : 0;
+                          return (
+                            <div key={ch} className="bg-surface-900/50 p-5 rounded-xl border border-white/[0.02] flex flex-col items-center justify-center space-y-2">
+                              <h4 className="font-bold text-slate-300 text-sm tracking-wider uppercase">{channelNames[ch]}</h4>
+                              <div className="flex items-baseline gap-2 mt-1">
+                                <span className="text-3xl font-bold text-emerald-400">{optPct}%</span>
+                              </div>
+                              <span className="text-xs text-emerald-500/70 font-medium">{stats.optimizedCount} fallbacks</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+
                   let filtered = [];
-                  if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
-                  else if (selectedMetric === 'bypass') filtered = logs.filter(l => l.is_vip_rigid_routing);
+                  if (selectedMetric === 'bypass') {
+                    filtered = logs.filter(l => l.is_vip_rigid_routing);
+                  }
                   
                   if (filtered.length === 0) return <p className="text-sm text-slate-500 italic text-center py-4">No records in this category.</p>;
                   
