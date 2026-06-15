@@ -535,29 +535,49 @@ export default function App() {
                     const channelNames = { 'WHATSAPP': 'WhatsApp', 'SMS': 'SMS', 'RCS': 'RCS', 'EMAIL': 'Email' };
                     const channels = ['WHATSAPP', 'SMS', 'RCS', 'EMAIL'];
                     return (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pb-2 mt-2">
-                        {channels.map(ch => {
-                          const chLogs = logs.filter(l => l.channel === ch);
-                          const optimizedLogs = chLogs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
-                          const optimizedCount = optimizedLogs.length;
-                          const failedOptimizedCount = optimizedLogs.filter(l => l.current_status === 'FAILED').length;
-
-                          return (
-                            <div key={ch} className="bg-surface-900/50 p-4 rounded-xl border border-white/[0.02] flex flex-col items-center justify-center space-y-3">
-                              <h4 className="font-bold text-slate-300 text-sm tracking-wider uppercase">{channelNames[ch]}</h4>
-                              
-                              <div className="flex flex-col items-center gap-1 w-full">
-                                <span className="text-3xl font-bold text-emerald-400">{optimizedCount}</span>
-                                <span className="text-[10px] text-emerald-500/70 font-semibold uppercase tracking-wider">Total Fallbacks</span>
-                              </div>
-
-                              <div className="flex flex-col items-center gap-1 pt-3 border-t border-white/[0.04] w-full">
-                                <span className="text-xl font-bold text-red-400">{failedOptimizedCount}</span>
-                                <span className="text-[10px] text-red-400/70 font-semibold uppercase tracking-wider">Still Failed</span>
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div className="bg-surface-900/30 rounded-xl border border-white/[0.02] p-5 mt-2 overflow-x-auto">
+                        <table className="w-full text-left min-w-[500px]">
+                          <thead>
+                            <tr>
+                              <th className="pb-4 w-1/3"></th>
+                              {channels.map(ch => (
+                                <th key={ch} className="pb-4 text-center font-bold text-slate-300 text-sm tracking-wider uppercase w-1/6">
+                                  {channelNames[ch]}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/[0.04]">
+                            <tr>
+                              <td className="py-4 pr-4">
+                                <div className="text-xs font-semibold uppercase tracking-wider text-emerald-500/80">Rerouted Volume</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Successfully shifted to this channel</div>
+                              </td>
+                              {channels.map(ch => {
+                                const count = logs.filter(l => l.channel === ch && l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing).length;
+                                return (
+                                  <td key={ch} className="py-4 text-center">
+                                    <span className="text-3xl font-bold text-emerald-400">{count}</span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                            <tr>
+                              <td className="py-4 pr-4">
+                                <div className="text-xs font-semibold uppercase tracking-wider text-red-400/80">Unresolved Failures</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Failed despite rerouting</div>
+                              </td>
+                              {channels.map(ch => {
+                                const count = logs.filter(l => l.channel === ch && l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing && l.current_status === 'FAILED').length;
+                                return (
+                                  <td key={ch} className="py-4 text-center">
+                                    <span className="text-xl font-bold text-red-400">{count}</span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                     );
                   }
