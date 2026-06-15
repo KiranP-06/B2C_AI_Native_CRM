@@ -153,7 +153,7 @@ const db = {
 const PORT = process.env.PORT || process.env.CRM_PORT || 5001;
 const server = app.listen(PORT, () => console.log(`🚀 CRM Service on port ${PORT}`));
 
-const MOCK_CHANNEL_URL = process.env.MOCK_CHANNEL_URL || 'http://localhost:5002';
+const MOCK_CHANNEL_URL = process.env.MOCK_CHANNEL_URL || 'http://127.0.0.1:5002';
 
 // Broadcast is now a no-op since frontend uses Supabase Realtime
 function broadcast(type, payload) {

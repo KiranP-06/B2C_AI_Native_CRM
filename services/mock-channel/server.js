@@ -4,9 +4,10 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 
 dotenv.config({ path: '../../.env' });
-dotenv.config();
+dotenv.config(); // also try local .env
 
-const CRM_URL = process.env.BACKEND_URL || 'http://localhost:5001';
+// If BACKEND_URL is not set, use local IP and the dynamic PORT Render assigns to the CRM
+const CRM_URL = process.env.BACKEND_URL || `http://127.0.0.1:${process.env.PORT || 5001}`;
 
 const app = express();
 app.use(cors());
@@ -77,6 +78,6 @@ app.post('/send', (req, res) => {
 });
 
 const port = 5002;
-app.listen(port, () => {
-  console.log(`Mock Channel Service running on port ${port}`);
+app.listen(port, '127.0.0.1', () => {
+  console.log(`Mock Channel Service running on 127.0.0.1:${port}`);
 });
