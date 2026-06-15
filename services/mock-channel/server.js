@@ -6,8 +6,9 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '../../.env' });
 dotenv.config(); // also try local .env
 
-// If BACKEND_URL is not set, use local IP and the dynamic PORT Render assigns to the CRM
-const CRM_URL = process.env.BACKEND_URL || `http://127.0.0.1:${process.env.PORT || 5001}`;
+// Always use the internal loopback to talk to the CRM process running in the same Render container
+// This avoids public network 'hairpin NAT' issues and trailing slash errors.
+const CRM_URL = `http://127.0.0.1:${process.env.PORT || 5001}`;
 
 const app = express();
 app.use(cors());
