@@ -538,15 +538,23 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pb-2 mt-2">
                         {channels.map(ch => {
                           const chLogs = logs.filter(l => l.channel === ch);
-                          const stats = computeKPIs(chLogs);
-                          const optPct = stats.total > 0 ? Math.round((stats.optimizedCount / stats.total) * 100) : 0;
+                          const optimizedLogs = chLogs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
+                          const optimizedCount = optimizedLogs.length;
+                          const failedOptimizedCount = optimizedLogs.filter(l => l.current_status === 'FAILED').length;
+
                           return (
-                            <div key={ch} className="bg-surface-900/50 p-5 rounded-xl border border-white/[0.02] flex flex-col items-center justify-center space-y-2">
+                            <div key={ch} className="bg-surface-900/50 p-4 rounded-xl border border-white/[0.02] flex flex-col items-center justify-center space-y-3">
                               <h4 className="font-bold text-slate-300 text-sm tracking-wider uppercase">{channelNames[ch]}</h4>
-                              <div className="flex items-baseline gap-2 mt-1">
-                                <span className="text-3xl font-bold text-emerald-400">{optPct}%</span>
+                              
+                              <div className="flex flex-col items-center gap-1 w-full">
+                                <span className="text-3xl font-bold text-emerald-400">{optimizedCount}</span>
+                                <span className="text-[10px] text-emerald-500/70 font-semibold uppercase tracking-wider">Total Fallbacks</span>
                               </div>
-                              <span className="text-xs text-emerald-500/70 font-medium">{stats.optimizedCount} fallbacks</span>
+
+                              <div className="flex flex-col items-center gap-1 pt-3 border-t border-white/[0.04] w-full">
+                                <span className="text-xl font-bold text-red-400">{failedOptimizedCount}</span>
+                                <span className="text-[10px] text-red-400/70 font-semibold uppercase tracking-wider">Still Failed</span>
+                              </div>
                             </div>
                           );
                         })}
