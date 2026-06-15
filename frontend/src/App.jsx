@@ -492,17 +492,53 @@ export default function App() {
             <div className="glass-card p-4 animate-slide-down border-l-4" style={{ borderLeftColor: selectedMetric === 'dispatched' ? 'var(--accent)' : selectedMetric === 'optimized' ? '#10b981' : '#a855f7' }}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-white flex items-center gap-2">
-                  {selectedMetric === 'dispatched' && <><Target className="w-4 h-4 text-accent-light" /> All Dispatched Messages</>}
+                  {selectedMetric === 'dispatched' && <><Target className="w-4 h-4 text-accent-light" /> Lifetime Channel Stats</>}
                   {selectedMetric === 'optimized' && <><TrendingUp className="w-4 h-4 text-emerald-400" /> Optimized Route Details</>}
                   {selectedMetric === 'bypass' && <><Users className="w-4 h-4 text-purple-400" /> VIP Guardrail Bypass Details</>}
                 </h3>
                 <button onClick={() => setSelectedMetric(null)} className="text-xs text-slate-400 hover:text-white">Close</button>
               </div>
-              <div className="max-h-48 overflow-y-auto pr-2 space-y-1.5">
+              <div className="max-h-[30rem] overflow-y-auto pr-2 space-y-1.5">
                 {(() => {
+                  if (selectedMetric === 'dispatched') {
+                    const channels = ['WHATSAPP', 'SMS', 'RCS', 'EMAIL'];
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pb-2 mt-2">
+                        {channels.map(ch => {
+                          const chLogs = logs.filter(l => l.channel === ch);
+                          const stats = computeKPIs(chLogs);
+                          return (
+                            <div key={ch} className="bg-surface-900/50 p-4 rounded-xl border border-white/[0.02] space-y-3">
+                              <h4 className="font-bold text-white text-sm uppercase tracking-wider">{ch}</h4>
+                              <div className="space-y-2">
+                                {['DELIVERED', 'OPENED', 'CLICKED'].map(stat => (
+                                  <div key={stat} className="flex items-center justify-between text-xs">
+                                    <span className="text-slate-400">{stat}</span>
+                                    <span className="text-slate-200 font-medium">{stats.percentages[stat]}% <span className="text-slate-500">({stats.raw[stat]})</span></span>
+                                  </div>
+                                ))}
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">FAILED</span>
+                                  <span className="text-slate-200 font-medium">
+                                    {stats.total > 0 ? Math.round((stats.actualFailed / stats.total) * 100) : 0}% <span className="text-slate-500">({stats.actualFailed})</span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-emerald-400">OPTIMIZED</span>
+                                  <span className="text-emerald-400 font-medium">
+                                    {stats.total > 0 ? Math.round((stats.optimizedCount / stats.total) * 100) : 0}% <span className="text-emerald-500/50">({stats.optimizedCount})</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+
                   let filtered = [];
-                  if (selectedMetric === 'dispatched') filtered = logs;
-                  else if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
+                  if (selectedMetric === 'optimized') filtered = logs.filter(l => l.channel !== l.target_channel && l.target_channel !== 'UNKNOWN' && !l.is_vip_rigid_routing);
                   else if (selectedMetric === 'bypass') filtered = logs.filter(l => l.is_vip_rigid_routing);
                   
                   if (filtered.length === 0) return <p className="text-sm text-slate-500 italic text-center py-4">No records in this category.</p>;
