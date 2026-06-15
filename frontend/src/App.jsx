@@ -523,12 +523,6 @@ export default function App() {
                                     {stats.total > 0 ? Math.round((stats.actualFailed / stats.total) * 100) : 0}% <span className="text-slate-500">({stats.actualFailed})</span>
                                   </span>
                                 </div>
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="text-emerald-400">OPTIMIZED</span>
-                                  <span className="text-emerald-400 font-medium">
-                                    {stats.total > 0 ? Math.round((stats.optimizedCount / stats.total) * 100) : 0}% <span className="text-emerald-500/50">({stats.optimizedCount})</span>
-                                  </span>
-                                </div>
                               </div>
                             </div>
                           );
